@@ -15,10 +15,10 @@ disassembler: $(wildcard disassembler/*.cpp) | $(BIN_DIR)
 voidEmu: $(wildcard src/*.cpp) | $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) $^ -o ${BIN_DIR}/$@ $(LDFLAGS)
 
-$(BIN_DIR) $(OBJ_DIR):
+$(BIN_DIR):
 	mkdir -p $@
 
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(BIN_DIR)
 
 .PHONY: all clean run

@@ -4,6 +4,14 @@ Current state: This project is a Chip8 emulator implemented according to [Cowgod
 
 This is a simple emulator for the Game Boy. It is written in C++ and uses SDL for rendering.
 
+## TODO
+
+- [ ] Implement sound
+- [ ] Implement keyboard input
+- [ ] Implement better e2e testing for visuals and other things
+- [ ] Implement a disassembler
+- [ ] Get better debugging
+
 ## Why
 
 I wanted to learn how to use C++ and SDL, and I recently saw a youtube video listing out reasons for writing a Game Boy emulator. The name is VoidEmu, because I gurantee I will be staring into the void trying to make this thing work.
@@ -15,4 +23,4 @@ I wanted to learn how to use C++ and SDL, and I recently saw a youtube video lis
 
 # License
 
-This is free and unencumbered software released into the public domain, much to the detriment of my "heirs and successors"
+This is free and unencumbered software released into the public domain, much to the detriment of my "heirs and successors". Unlicense everything

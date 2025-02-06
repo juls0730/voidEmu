@@ -113,7 +113,7 @@ class Bytecode {
 };
 
 inline Bytecode parse(uint16_t opcode) {
-    struct Bytecode bytecode;
+    Bytecode bytecode;
 
     switch (opcode & 0xF000) {
     case 0x0000: {

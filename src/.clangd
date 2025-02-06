@@ -2,3 +2,8 @@ CompileFlags:
   Add: 
     - -I../libs
     - -ISDL2
+    - -Wall 
+    - -Wextra 
+    - -std=c++23 
+    - -g 
+    - -Werror

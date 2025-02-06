@@ -17,13 +17,14 @@
 
 const int SCREEN_WIDTH = 64;
 const int SCREEN_HEIGHT = 32;
-const int SCALE = 5;
-static size_t RAM_SIZE = 0x1000;
+const size_t RAM_SIZE = 0x1000;
 const int TARGET_CYCLES_PER_SECOND = 500;
 const int TARGET_MS_PER_CYCLE = 1000 / TARGET_CYCLES_PER_SECOND;
-const int TARGET_MS_PER_FRAME = 1000 / 60;
-const int BG_COLOR = 0x081820;
-const int FG_COLOR = 0x88c070;
+const int TARGET_FRAMERATE = 60;
+const int TARGET_MS_PER_FRAME = 1000 / TARGET_FRAMERATE;
+static int SCALE = 10;
+static int BG_COLOR = 0x081820;
+static int FG_COLOR = 0x88c070;
 
 void draw(SDL_Renderer *renderer, SDL_Texture *texture,
           bool framebuffer[SCREEN_HEIGHT][SCREEN_WIDTH]) {
@@ -115,8 +116,20 @@ class Chip8 {
     int run();
     void view_ram();
     void dump_ram();
+    void view_stack();
+    void dump_fb(int);
 
-    int is_protected(size_t addr) { return addr < 0x200; }
+    // allow the font to be read
+    bool is_protected(size_t addr) {
+        if (addr <= sizeof(FONT))
+            return false;
+        return addr < 0x200;
+    }
+
+    // only allow addresses in the program space to be executed, addresses not
+    // protected, but in the reserved space, for example, the font, should not
+    // be executable
+    bool is_executable(size_t addr) { return addr > 0x1FF; }
 
     int read_mem(size_t addr) {
         if (is_protected(addr)) {
@@ -165,7 +178,7 @@ class Chip8 {
     uint16_t i;
     uint8_t delay;
     uint8_t sound_timer;
-    bool compat;
+    // bool compat;
 };
 
 int Chip8::run() {
@@ -203,6 +216,11 @@ int Chip8::run() {
         auto start_time = high_resolution_clock::now();
 
         uint16_t op = (read_mem(pc) << 8) | read_mem(pc + 1);
+        if (!is_executable(pc)) {
+            printf("Attempted to execute protected memory at 0x%04x\n", pc);
+            view_ram();
+            return 1;
+        }
         pc += 2;
         printf("PC: 0x%04x OP: 0x%04x\n", pc, op);
         Bytecode bytecode = parse(op);
@@ -240,6 +258,8 @@ int Chip8::run() {
             // The interpreter sets the program counter to the address at the
             // top of the stack, then subtracts 1 from the stack pointer.
 
+            // --sp subtracts 1 from the stack pointer and returns the value
+            // after the subraction
             pc = stack[--sp];
             break;
         }
@@ -258,7 +278,9 @@ int Chip8::run() {
             // The interpreter increments the stack pointer, then puts the
             // current PC on the top of the stack. The PC is then set to nnn.
 
-            stack[++sp] = pc;
+            // sp++ increments the stack pointer and returns the value before
+            // the addition
+            stack[sp++] = pc;
             pc = bytecode.operand.word & 0x0FFF;
             break;
         }
@@ -334,7 +356,13 @@ int Chip8::run() {
             int result = this->v[bytecode.operand.reg_reg.x] +
                          this->v[bytecode.operand.reg_reg.y];
             this->v[bytecode.operand.reg_reg.x] = result & 0xFF;
-            this->v[0xF] = result > 0xFF;
+
+            if (result > 0xFF) {
+                printf("Overflowed!\n");
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
 
             break;
         }
@@ -342,10 +370,34 @@ int Chip8::run() {
             //             Set Vx = Vx - Vy, set VF = NOT borrow.
             // If Vx > Vy, then VF is set to 1, otherwise 0. Then Vy is
             // subtracted from Vx, and the results stored in Vx.
-            int result = this->v[bytecode.operand.reg_reg.x] -
-                         this->v[bytecode.operand.reg_reg.y];
-            this->v[bytecode.operand.reg_reg.x] = result & 0xFF;
-            this->v[0xF] = result < 0;
+            printf("Subtracting %d - %d (v%x - v%x)\n",
+                   this->v[bytecode.operand.reg_reg.x],
+                   this->v[bytecode.operand.reg_reg.y],
+                   bytecode.operand.reg_reg.x, bytecode.operand.reg_reg.y);
+
+            bool borrow = this->v[bytecode.operand.reg_reg.x] >=
+                          this->v[bytecode.operand.reg_reg.y];
+
+            this->v[bytecode.operand.reg_reg.x] =
+                (this->v[bytecode.operand.reg_reg.x] -
+                 this->v[bytecode.operand.reg_reg.y]) &
+                0xFF;
+            if (borrow) {
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
+
+            if (borrow) {
+                printf("Overflowed!\n");
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
+
+            printf("Resulting in %d (v%x) with %s\n",
+                   this->v[bytecode.operand.reg_reg.x],
+                   bytecode.operand.reg_reg.x, borrow ? "borrow" : "no borrow");
             break;
         }
         case OR_REG: {
@@ -386,28 +438,60 @@ int Chip8::run() {
             //             Set Vx = Vx SHR 1.
             // If the least-significant bit of Vx is 1, then VF is set to 1,
             // otherwise 0. Then Vx is divided by 2.
-            this->v[0xF] = this->v[bytecode.operand.reg_reg.x] & 1;
-            this->v[bytecode.operand.reg_reg.x] =
-                this->v[bytecode.operand.reg_reg.x] >> 1;
+            bool carry = this->v[bytecode.operand.reg_reg.x] & 0x01;
+            this->v[bytecode.operand.reg_reg.x] >>= 1;
+            if (carry) {
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
             break;
         }
         case SUBN_REG: {
             //             Set Vx = Vy - Vx, set VF = NOT borrow.
             // If Vy > Vx, then VF is set to 1, otherwise 0. Then Vx is
             // subtracted from Vy, and the results stored in Vx.
-            int result = this->v[bytecode.operand.reg_reg.y] -
-                         this->v[bytecode.operand.reg_reg.x];
-            this->v[bytecode.operand.reg_reg.x] = result & 0xFF;
-            this->v[0xF] = result < 0;
+            printf("Subtracting %d - %d (v%x - v%x)\n",
+                   this->v[bytecode.operand.reg_reg.y],
+                   this->v[bytecode.operand.reg_reg.x],
+                   bytecode.operand.reg_reg.y, bytecode.operand.reg_reg.x);
+
+            bool borrow = this->v[bytecode.operand.reg_reg.y] >=
+                          this->v[bytecode.operand.reg_reg.x];
+
+            this->v[bytecode.operand.reg_reg.x] =
+                (this->v[bytecode.operand.reg_reg.y] -
+                 this->v[bytecode.operand.reg_reg.x]) &
+                0xFF;
+            if (borrow) {
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
+
+            if (borrow) {
+                printf("Overflowed!\n");
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
+
+            printf("Resulting in %d (v%x) with %s\n",
+                   this->v[bytecode.operand.reg_reg.x],
+                   bytecode.operand.reg_reg.x, borrow ? "borrow" : "no borrow");
             break;
         }
         case SHL_REG: {
             //             Set Vx = Vx SHL 1.
             // If the most-significant bit of Vx is 1, then VF is set to 1,
             // otherwise to 0. Then Vx is multiplied by 2.
-            this->v[0xF] = this->v[bytecode.operand.reg_reg.x] >> 7;
-            this->v[bytecode.operand.reg_reg.x] =
-                this->v[bytecode.operand.reg_reg.x] << 1;
+            bool carry = (this->v[bytecode.operand.reg_reg.x] >> 7) & 0x01;
+            this->v[bytecode.operand.reg_reg.x] <<= 1;
+            if (carry) {
+                this->v[0xF] = 1;
+            } else {
+                this->v[0xF] = 0;
+            }
             break;
         }
         case LOAD_I_BYTE: {
@@ -443,7 +527,6 @@ int Chip8::run() {
             // around to the opposite side of the screen. See instruction 8xy3
             // for more information on XOR, and section 2.4, Display, for more
             // information on the Chip-8 screen and sprites.
-            // fprintf(stderr, "DRW not implemented\n");
             this->v[0x0F] = 0;
 
             for (int i = 0; i < bytecode.operand.reg_reg_nibble.nibble; i++) {
@@ -455,9 +538,6 @@ int Chip8::run() {
                             SCREEN_WIDTH;
                     int y = (this->v[bytecode.operand.reg_reg_nibble.y] + i) %
                             SCREEN_HEIGHT;
-
-                    printf("Sprite %d, bit %d %d\n", i, j,
-                           sprite & (0x80 >> j));
                     if (!source) {
                         continue;
                     }
@@ -527,9 +607,9 @@ int Chip8::run() {
             // corresponding to the value of Vx. See section 2.4, Display, for
             // more information on the Chip-8 hexadecimal font.
 
-            //? This is the ONLY spot where the emulator is allowed to access
-            //? 0x0000-0x01FF of the RAM. Since that area of RAM is reserved for
-            //? the emulator's own use.
+            //? This is the ONLY spot in 0x0000-0x01FF of the RAM where the
+            //? emulator is allowed to access. Since that area of RAM is
+            //? where the font is stored.
             this->i = (uint16_t)(bytecode.operand.byte * 5);
             break;
         }
@@ -540,13 +620,16 @@ int Chip8::run() {
             // hundreds digit in memory at location in I, the tens digit at
             // location I+1, and the ones digit at location I+2.
             // TODO: is this correct?
-            this->ram[this->i] =
-                (uint8_t)((this->v[bytecode.operand.reg_reg.x] / 100) & 0x0F);
-            this->ram[this->i + 1] =
+            write_mem(
+                this->i,
+                (uint8_t)((this->v[bytecode.operand.reg_reg.x] / 100) & 0x0F));
+            write_mem(
+                this->i + 1,
                 (uint8_t)((this->v[bytecode.operand.reg_reg.x] % 100) / 10) &
-                0x0F;
-            this->ram[this->i + 2] =
-                (uint8_t)(this->v[bytecode.operand.reg_reg.x] % 10) & 0x0F;
+                    0x0F);
+            write_mem(this->i + 2,
+                      (uint8_t)(this->v[bytecode.operand.reg_reg.x] % 10) &
+                          0x0F);
             break;
         }
         case LD_PTR_I_REG: {
@@ -554,8 +637,8 @@ int Chip8::run() {
             //             location I.
             // The interpreter copies the values of registers V0 through Vx into
             // memory, starting at the address in I.
-            for (int i = 0; i < bytecode.operand.reg_reg.x; i++) {
-                this->ram[this->i + i] = this->v[i];
+            for (int i = 0; i <= bytecode.operand.byte; i++) {
+                write_mem(this->i + i, this->v[i]);
             }
             break;
         }
@@ -564,8 +647,8 @@ int Chip8::run() {
             //             location I.
             // The interpreter reads values from memory starting at location I
             // into registers V0 through Vx.
-            for (int i = 0; i < bytecode.operand.reg_reg.x; i++) {
-                this->v[i] = this->ram[this->i + i];
+            for (int i = 0; i <= bytecode.operand.byte; i++) {
+                this->v[i] = read_mem(this->i + i);
             }
             break;
         }
@@ -578,16 +661,21 @@ int Chip8::run() {
         }
         }
 
-        printf("Emulating...\n");
-
         auto now = high_resolution_clock::now();
+        // 60hz clock
         if (duration_cast<milliseconds>(now - last_timer_update) >=
             timer_interval) {
             printf("Updating...\n");
-            if (delay > 0)
+            if (delay > 0) {
                 --delay;
-            if (sound_timer > 0)
+            }
+            if (sound_timer > 0) {
                 --sound_timer;
+            }
+
+            // SDL technically has an SDL_Delay function thing, but doing it
+            // this way allows us to be more flexible and more away from SDL in
+            // the future if we wanted to.
             draw(renderer, texture, this->fb);
             last_timer_update = now;
         }
@@ -610,6 +698,8 @@ int Chip8::run() {
 void Chip8::view_ram() {
     printf("Hex dump:\n");
     for (size_t i = 0; i < RAM_SIZE / 16; i++) {
+        printf("%04x: ", (unsigned int)(i * 16));
+
         size_t j = 0;
         for (; j < 16; j++) {
             printf("%02x ", this->ram[i * 16 + j]);
@@ -640,15 +730,121 @@ void Chip8::dump_ram() {
     fclose(fp);
 }
 
-int main(int argc, char **argv) {
-    signal(SIGINT, exit);
+void Chip8::view_stack() {
+    printf("Stack:\n");
+    for (int i = 0; i < 16; i++) {
+        printf("%04x ", stack[i]);
+    }
+    printf("\n");
+}
 
+void Chip8::dump_fb(int _) {
+    (void)_;
+    FILE *fp = fopen("fb.dump", "wb");
+
+    if (fp == NULL) {
+        printf("Failed to open file\n");
+        exit(1);
+    }
+
+    fwrite(fb, SCREEN_HEIGHT * SCREEN_WIDTH, 1, fp);
+    fclose(fp);
+}
+
+void destroy(int _) {
+    (void)_;
+
+    if (!SDL_WasInit(SDL_INIT_VIDEO)) {
+        exit(0);
+    }
+
+    SDL_Event event;
+    event.type = SDL_QUIT;
+    SDL_PushEvent(&event);
+
+    exit(0);
+}
+
+int main(int argc, char **argv) {
+    signal(SIGINT, destroy);
     if (argc < 2) {
-        printf("Usage: %s <file>\n", argv[0]);
+        printf("Usage: %s <file> [options]\n", argv[0]);
         return 1;
     }
 
-    Chip8 chip8 = Chip8(argv[1]);
+    char *file_name = NULL;
+
+    // is this memory safe?
+    // start from 1 to skip the first argument (the executable)
+    for (int i = 1; i < argc; i++) {
+        if (argc < i) {
+            printf("exceeded argc\n");
+        }
+
+        if (strcmp(argv[i], "--scale") == 0) {
+
+            if (argc < i + 1) {
+                printf("Error: Missing scale value\n");
+                return 1;
+            }
+
+            long scale = strtol(argv[i + 1], NULL, 10);
+            if (scale < 1 || scale > 50) {
+                printf("Error: Invalid scale value\n");
+                return 1;
+            }
+
+            SCALE = scale;
+
+            i++;
+            continue;
+        }
+
+        if (strcmp(argv[i], "--bg") == 0) {
+            if (argc < i + 1) {
+                printf("Error: Missing bg value\n");
+                return 1;
+            }
+
+            long bg = strtol(argv[i + 1], NULL, 16);
+            if (bg < 0 || bg > 0xFFFFFF) {
+                printf("Error: Invalid bg value\n");
+                return 1;
+            }
+
+            // RSH by 8 to correct for the alpha channel
+            BG_COLOR = (int)(bg << 8);
+            i++;
+            continue;
+        }
+
+        if (strcmp(argv[i], "--fg") == 0) {
+            if (argc < i + 1) {
+                printf("Error: Missing fg value\n");
+                return 1;
+            }
+
+            long fg = strtol(argv[i + 1], NULL, 16);
+            if (fg < 0 || fg > 0xFFFFFF) {
+                printf("Error: Invalid fg value\n");
+                return 1;
+            }
+
+            // RSH by 8 to correct for the alpha channel
+            FG_COLOR = (int)(fg << 8);
+            i++;
+            continue;
+        }
+
+        // if the argument does not start with a dash, assume it is a file
+        if (argv[i][0] != '-') {
+            printf("Filename: %s\n", argv[i]);
+            file_name = argv[i];
+            continue;
+        }
+    }
+
+    Chip8 chip8 = Chip8(file_name);
     chip8.view_ram();
     int ret = chip8.run();
 
