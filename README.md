@@ -11,6 +11,7 @@ I wanted to learn how to use C++ and SDL, and I recently saw a youtube video lis
 ## References
 
 * [Cowgod's Chip-8 Technical Reference](http://devernay.free.fr/hacks/chip8/C8TECH10.HTM)
+- [Chip-8 Test Suite](https://github.com/Timendus/chip8-test-suite)
 
 # License
 

@@ -1,12 +1,25 @@
 #!/bin/bash
 
-roms=($(find tests/ -type f))
+if [ ! -d tests/extern ]; then
+    mkdir tests/extern
+fi
+
+extern_roms=("https://github.com/Timendus/chip8-test-suite/raw/main/bin/1-chip8-logo.ch8" "https://github.com/Timendus/chip8-test-suite/raw/main/bin/2-ibm-logo.ch8")
+for rom in "${extern_roms[@]}"; do
+    if [ ! -f tests/extern/$(basename $rom) ]; then
+        echo "Downloading $rom"
+        curl -L $rom -o tests/extern/$(basename $rom)
+    fi
+done
+
+roms=($(find tests/ -type f -name "*.ch8"))
 
 testOutput=$(mktemp)
 
 if ${VERBOSE:-false}; then
     testOutput=2
 fi
+
 
 for rom in "${roms[@]}"; do
     echo -n "$rom "

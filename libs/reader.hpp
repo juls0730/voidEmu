@@ -171,7 +171,7 @@ inline Bytecode parse(uint16_t opcode) {
         bytecode.instruction_type = LOAD_BYTE;
         break;
     }
-    case 0x700: {
+    case 0x7000: {
         bytecode.instruction_type = ADD_BYTE;
         break;
     }
