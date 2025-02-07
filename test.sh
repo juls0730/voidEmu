@@ -11,6 +11,8 @@ extern_roms=(
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/2-ibm-logo.ch8"
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/3-corax+.ch8"
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/4-flags.ch8"
+    "https://github.com/Timendus/chip8-test-suite/raw/main/bin/6-keypad.ch8"
+    "https://github.com/Timendus/chip8-test-suite/raw/main/bin/7-beep.ch8"
 )
 
 for rom in "${extern_roms[@]}"; do

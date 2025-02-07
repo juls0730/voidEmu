@@ -1,6 +1,11 @@
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_audio.h>
+#include <SDL2/SDL_render.h>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <sys/types.h>
+#include <thread>
 
 #define BYTECODE_READER_IMPLEMENTATION
 #include "reader.hpp"
@@ -22,28 +27,40 @@ const int TARGET_CYCLES_PER_SECOND = 500;
 const int TARGET_MS_PER_CYCLE = 1000 / TARGET_CYCLES_PER_SECOND;
 const int TARGET_FRAMERATE = 60;
 const int TARGET_MS_PER_FRAME = 1000 / TARGET_FRAMERATE;
+const int TARGET_MS_PER_TICK = 1000 / 60;
 static int SCALE = 10;
 static int BG_COLOR = 0x081820;
 static int FG_COLOR = 0x88c070;
 
-void draw(SDL_Renderer *renderer, SDL_Texture *texture,
-          bool framebuffer[SCREEN_HEIGHT][SCREEN_WIDTH]) {
+const int SAMPLE_RATE = 44100; // 44.1kHz sample rate
+const int FREQUENCY = 440;     // A4 tone (you can change this)
+const int AMPLITUDE = 28000;   // Volume level
+const int SAMPLES_PER_CYCLE = SAMPLE_RATE / FREQUENCY;
 
-    printf("Drawing...\n");
+void audioCallback(void *userdata, Uint8 *stream, int len) {
+    (void)userdata;
+    static int phase = 0;
+    Sint16 *buffer = (Sint16 *)stream;
+    int length = len / 2;
 
-    uint32_t pixels[SCREEN_WIDTH * SCREEN_HEIGHT];
-    for (int i = 0; i < SCREEN_HEIGHT; i++) {
-        for (int j = 0; j < SCREEN_WIDTH; j++) {
-            pixels[i * SCREEN_WIDTH + j] =
-                framebuffer[i][j] ? FG_COLOR : BG_COLOR;
-        }
+    for (int i = 0; i < length; i++) {
+        buffer[i] = (phase < SAMPLES_PER_CYCLE / 4) ? AMPLITUDE : -AMPLITUDE;
+        phase = (phase + 1) % SAMPLES_PER_CYCLE;
     }
+}
 
-    SDL_UpdateTexture(texture, nullptr, pixels,
-                      SCREEN_WIDTH * sizeof(uint32_t));
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-    SDL_RenderPresent(renderer);
+void initAudio() {
+    SDL_AudioSpec want, have;
+    SDL_zero(want);
+    want.freq = SAMPLE_RATE;
+    want.format = AUDIO_S16SYS;
+    want.channels = 1;
+    want.samples = 2048; // Buffer size
+    want.callback = audioCallback;
+
+    if (SDL_OpenAudio(&want, &have) < 0) {
+        SDL_Log("Failed to open audio: %s", SDL_GetError());
+    }
 }
 
 static uint8_t FONT[0x10][0x05] = {
@@ -117,13 +134,12 @@ class Chip8 {
     void view_ram();
     void dump_ram();
     void view_stack();
-    void dump_fb(int);
 
     // allow the font to be read
     bool is_protected(size_t addr) {
         if (addr <= sizeof(FONT))
             return false;
-        return addr < 0x200;
+        return addr < 0x1FF;
     }
 
     // only allow addresses in the program space to be executed, addresses not
@@ -153,6 +169,7 @@ class Chip8 {
 
     void set_sound_timer(uint8_t val) {
         // enable buzzer
+        printf("The sound timer is set to %d\n", val);
         this->sound_timer = val;
     }
 
@@ -168,32 +185,64 @@ class Chip8 {
         return this->fb[y][x];
     }
 
+    bool fb[SCREEN_HEIGHT][SCREEN_WIDTH];
+    std::atomic_uint8_t delay;
+    std::atomic_uint8_t sound_timer;
+    std::mutex key_mutex;
+    std::condition_variable key_cv;
+    std::atomic<bool> key_pressed = false;
+    std::atomic<uint8_t> last_key = 0;
+
   private:
     uint8_t *ram;
-    bool fb[SCREEN_HEIGHT][SCREEN_WIDTH];
     uint16_t pc;
     uint16_t *stack;
     uint8_t sp;
     uint8_t v[16];
     uint16_t i;
-    uint8_t delay;
-    uint8_t sound_timer;
     // bool compat;
 };
 
-int Chip8::run() {
-    using namespace std::chrono;
+void draw(SDL_Renderer *renderer, SDL_Texture *texture, Chip8 *chip8) {
+    printf("Drawing...\n");
 
-    int exit = 0;
-    constexpr auto cycle_time = milliseconds(TARGET_MS_PER_CYCLE);
-    constexpr auto timer_interval = milliseconds(TARGET_MS_PER_FRAME);
-    auto last_timer_update = high_resolution_clock::now();
-
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        printf("Failed to initialize SDL: %s\n", SDL_GetError());
-        return 1;
+    uint32_t pixels[SCREEN_WIDTH * SCREEN_HEIGHT];
+    for (int i = 0; i < SCREEN_HEIGHT; i++) {
+        for (int j = 0; j < SCREEN_WIDTH; j++) {
+            pixels[i * SCREEN_WIDTH + j] =
+                chip8->fb[i][j] ? FG_COLOR : BG_COLOR;
+        }
     }
 
+    SDL_UpdateTexture(texture, nullptr, pixels,
+                      SCREEN_WIDTH * sizeof(uint32_t));
+    SDL_RenderClear(renderer);
+    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+    SDL_RenderPresent(renderer);
+}
+
+void timer_thread(Chip8 *chip8) {
+    using namespace std::chrono;
+
+    initAudio();
+
+    while (true) {
+        std::this_thread::sleep_for(milliseconds(TARGET_MS_PER_TICK)); // ~60Hz
+        if (chip8->delay > 0) {
+            chip8->delay--;
+        }
+        if (chip8->sound_timer > 0) {
+            SDL_PauseAudio(0);
+            chip8->sound_timer--;
+        }
+
+        if (chip8->sound_timer == 0) {
+            SDL_PauseAudio(1);
+        }
+    }
+}
+
+void render_thread(Chip8 *chip8) {
     SDL_Window *window = SDL_CreateWindow(
         "CHIP-8 Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         SCREEN_WIDTH * SCALE, SCREEN_HEIGHT * SCALE, SDL_WINDOW_SHOWN);
@@ -203,16 +252,68 @@ int Chip8::run() {
                                              SDL_TEXTUREACCESS_STREAMING,
                                              SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    bool running = true;
-    SDL_Event event;
+    memset(chip8->fb, 0, SCREEN_WIDTH * SCREEN_HEIGHT);
 
-    while (running) {
+    while (true) {
+        printf("Rendering...\n");
+        draw(renderer, texture, chip8);
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(TARGET_MS_PER_FRAME)); // 60Hz
+    }
+}
+
+void input_thread(Chip8 *chip8, std::atomic_bool &running) {
+    SDL_Event event;
+    while (true) {
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
+            if (event.type == SDL_QUIT)
                 running = false;
+            if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                printf("Key pressed! %c\n", event.key.keysym.sym);
+                std::unique_lock<std::mutex> lock(chip8->key_mutex);
+                chip8->key_pressed = (event.type == SDL_KEYDOWN);
+                // check if the key is a valid CHIP-8, either a number or a, b,
+                // c, d, e, or f
+                if ((event.key.keysym.sym < 0x30 ||
+                     event.key.keysym.sym > 0x39) && // 0-9
+                    (event.key.keysym.sym < 0x61 ||
+                     event.key.keysym.sym > 0x66))
+                    continue;
+
+                uint8_t key = event.key.keysym.sym - 0x30;
+                if (key > 0x09) {
+                    key = key - 0x27;
+                }
+                printf("Key: %x\n", key);
+                chip8->last_key = key; // Map this to CHIP-8 keys
+                chip8->key_cv.notify_one();
+                lock.unlock();
             }
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
 
+int Chip8::run() {
+    using namespace std::chrono;
+
+    constexpr auto cycle_time = milliseconds(TARGET_MS_PER_CYCLE);
+
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        printf("Failed to initialize SDL: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    std::atomic_bool running = true;
+
+    std::thread render(render_thread, this);
+    std::this_thread::sleep_for(milliseconds(TARGET_MS_PER_FRAME));
+    std::thread input(input_thread, this, std::ref(running));
+    std::thread timer(timer_thread, this);
+
+    int ret = 0;
+
+    while (running) {
         auto start_time = high_resolution_clock::now();
 
         uint16_t op = (read_mem(pc) << 8) | read_mem(pc + 1);
@@ -232,7 +333,7 @@ int Chip8::run() {
         case EXIT: {
             // From Peter Miller's chip8run. Exit emulator with a return value
             // of N.
-            exit = bytecode.operand.byte;
+            ret = bytecode.operand.byte;
             running = false;
             break;
         }
@@ -557,7 +658,14 @@ int Chip8::run() {
             //             pressed.
             // Checks the keyboard, and if the key corresponding to the value of
             // Vx is currently in the down position, PC is increased by 2.
-            fprintf(stderr, "SKIP_PRESSED_REG not implemented\n");
+            // fprintf(stderr, "SKIP_PRESSED_REG not implemented\n");
+            printf("Last key: %x\n", this->last_key.load());
+            printf("Key: %x\n", bytecode.operand.byte);
+            uint8_t key = this->v[bytecode.operand.byte];
+
+            if (this->last_key.load() == key && this->key_pressed.load()) {
+                pc += 2;
+            }
             break;
         }
         case SKIP_NOT_PRESSED_REG: {
@@ -565,7 +673,17 @@ int Chip8::run() {
             //             not pressed.
             // Checks the keyboard, and if the key corresponding to the value of
             // Vx is currently in the up position, PC is increased by 2.
-            fprintf(stderr, "SKIP_NOT_PRESSED_REG not implemented\n");
+            // fprintf(stderr, "SKIP_NOT_PRESSED_REG not implemented\n");
+            printf("Last key: %x\n", this->last_key.load());
+            printf("Key: %x\n", bytecode.operand.byte);
+            uint8_t key = this->v[bytecode.operand.byte];
+
+            if (this->last_key.load() != key) {
+                pc += 2;
+            }
+            if (this->last_key.load() == key && !this->key_pressed.load()) {
+                pc += 2;
+            }
             break;
         }
         case LD_REG_DT: {
@@ -579,19 +697,31 @@ int Chip8::run() {
             //             Vx.
             // All execution stops until a key is pressed, then the value of
             // that key is stored in Vx.
-            fprintf(stderr, "LD_REG_K not implemented\n");
+            std::unique_lock<std::mutex> lock(this->key_mutex);
+
+            this->key_cv.wait(lock, [&]() {
+                this->v[bytecode.operand.byte] = this->last_key.load();
+                return this->key_pressed.load();
+            });
+            lock.unlock();
+            while (this->key_pressed.load()) {
+                printf("Waiting for key to be released %x %x\n",
+                       this->last_key.load(), this->key_pressed.load());
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
             break;
         }
         case LD_DT_REG: {
             //             Set delay timer = Vx.
             // DT is set equal to the value of Vx.
-            this->delay = this->v[bytecode.operand.reg_reg.x];
+            this->delay = this->v[bytecode.operand.byte];
             break;
         }
         case LD_ST_REG: {
             //             Set sound timer = Vx.
             // ST is set equal to the value of Vx.
-            set_sound_timer(bytecode.operand.byte);
+            printf("Sound timer set to %d\n", this->v[bytecode.operand.byte]);
+            set_sound_timer(this->v[bytecode.operand.byte]);
             break;
         }
         case ADD_I_REG: {
@@ -655,29 +785,8 @@ int Chip8::run() {
         case UNKNOWN_INSTRUCTION: {
             fprintf(stderr, "Unknown instruction type: %d\n",
                     bytecode.instruction_type);
-            exit = 1;
-            running = false;
-            break;
+            exit(1);
         }
-        }
-
-        auto now = high_resolution_clock::now();
-        // 60hz clock
-        if (duration_cast<milliseconds>(now - last_timer_update) >=
-            timer_interval) {
-            printf("Updating...\n");
-            if (delay > 0) {
-                --delay;
-            }
-            if (sound_timer > 0) {
-                --sound_timer;
-            }
-
-            // SDL technically has an SDL_Delay function thing, but doing it
-            // this way allows us to be more flexible and more away from SDL in
-            // the future if we wanted to.
-            draw(renderer, texture, this->fb);
-            last_timer_update = now;
         }
 
         auto elapsed_time = duration_cast<milliseconds>(
@@ -687,12 +796,16 @@ int Chip8::run() {
         }
     }
 
-    SDL_DestroyTexture(texture);
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    timer.detach();
+    render.detach();
+    input.detach();
 
-    return exit;
+    // SDL_DestroyTexture(texture);
+    // SDL_DestroyRenderer(renderer);
+    // SDL_DestroyWindow(window);
+    // SDL_Quit();
+
+    return ret;
 }
 
 void Chip8::view_ram() {
@@ -736,19 +849,6 @@ void Chip8::view_stack() {
         printf("%04x ", stack[i]);
     }
     printf("\n");
-}
-
-void Chip8::dump_fb(int _) {
-    (void)_;
-    FILE *fp = fopen("fb.dump", "wb");
-
-    if (fp == NULL) {
-        printf("Failed to open file\n");
-        exit(1);
-    }
-
-    fwrite(fb, SCREEN_HEIGHT * SCREEN_WIDTH, 1, fp);
-    fclose(fp);
 }
 
 void destroy(int _) {
