@@ -185,7 +185,7 @@ class Chip8 {
         return this->fb[y][x];
     }
 
-    bool fb[SCREEN_HEIGHT][SCREEN_WIDTH];
+    bool fb[SCREEN_HEIGHT][SCREEN_WIDTH] = {};
     std::atomic_uint8_t delay;
     std::atomic_uint8_t sound_timer;
     std::mutex key_mutex;
@@ -251,8 +251,6 @@ void render_thread(Chip8 *chip8) {
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
                                              SDL_TEXTUREACCESS_STREAMING,
                                              SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    memset(chip8->fb, 0, SCREEN_WIDTH * SCREEN_HEIGHT);
 
     while (true) {
         printf("Rendering...\n");
