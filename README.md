@@ -6,8 +6,9 @@ This is a simple emulator for the Game Boy. It is written in C++ and uses SDL fo
 
 ## TODO
 
-- [ ] Implement sound
-- [ ] Implement keyboard input
+- [X] Implement sound
+- [X] Implement keyboard input
+- [ ] Fix games like Tetris and pong
 - [ ] Implement better e2e testing for visuals and other things
 - [ ] Implement a disassembler
 - [ ] Get better debugging

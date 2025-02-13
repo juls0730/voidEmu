@@ -20,5 +20,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
+	rm -rf tests/extern
 
 .PHONY: all clean run

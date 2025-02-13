@@ -13,6 +13,18 @@ extern_roms=(
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/4-flags.ch8"
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/6-keypad.ch8"
     "https://github.com/Timendus/chip8-test-suite/raw/main/bin/7-beep.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Pong%20(1%20player).ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Tetris%20%5BFran%20Dachille,%201991%5D.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Lunar%20Lander%20(Udo%20Pernisz,%201979).ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Breakout%20%5BCarmelo%20Cortez,%201979%5D.ch8"
+    # Space Invaders uses misaligned addresses, so for a typical testing suite, 
+    # where we force aligned instructions, we dont want to test this since 
+    # it would fail for obvious reasons
+    # "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Space%20Invaders%20%5BDavid%20Winter%5D%20(alt).ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/hires/Hires%20Maze%20%5BDavid%20Winter,%20199x%5D.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/hires/Hires%20Stars%20%5BSergey%20Naydenov,%202010%5D.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/programs/Random%20Number%20Test%20%5BMatthew%20Mikolay,%202010%5D.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/hires/Hires%20Sierpinski%20%5BSergey%20Naydenov,%202010%5D.ch8"
 )
 
 for rom in "${extern_roms[@]}"; do
