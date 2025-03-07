@@ -25,6 +25,7 @@ extern_roms=(
     "https://github.com/kripod/chip8-roms/raw/refs/heads/master/hires/Hires%20Stars%20%5BSergey%20Naydenov,%202010%5D.ch8"
     "https://github.com/kripod/chip8-roms/raw/refs/heads/master/programs/Random%20Number%20Test%20%5BMatthew%20Mikolay,%202010%5D.ch8"
     "https://github.com/kripod/chip8-roms/raw/refs/heads/master/hires/Hires%20Sierpinski%20%5BSergey%20Naydenov,%202010%5D.ch8"
+    "https://github.com/kripod/chip8-roms/raw/refs/heads/master/games/Worm%20V4%20%5BRB-Revival%20Studios,%202007%5D.ch8"
 )
 
 for rom in "${extern_roms[@]}"; do

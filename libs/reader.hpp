@@ -96,6 +96,8 @@ enum instruction {
     LD_PTR_I_REG,
     // operand is a pointer to a uint8_t
     LD_REG_PTR_I,
+    // no operand
+    HLT,
     UNKNOWN_INSTRUCTION,
 };
 
@@ -136,11 +138,16 @@ inline Bytecode parse(uint16_t opcode) {
             bytecode.instruction_type = RET;
             break;
         }
+        case 0x0000: {
+            // HLT 0x0000
+            bytecode.instruction_type = HLT;
+            break;
+        }
         default:
             // SYS NNN
             //? NOTE: This is an outdated opcode, but it's still
             //? important for completeness. It's not clear what the
-            //? difference is between it and the JMP NNN 0x1NNN opcode.
+            //? difference is between it and the JP NNN 0x1NNN opcode.
             bytecode.instruction_type = SYS;
             break;
         }
@@ -207,7 +214,7 @@ inline Bytecode parse(uint16_t opcode) {
             // meant set VX equal to VY bitshifted right 1 but emulators and
             // software seem to ignore VY now. Note: This instruction was
             // originally undocumented but functional due to how the 8XXX
-            // instructions were implemented on teh COSMAC VIP.
+            // instructions were implemented on the COSMAC VIP.
             bytecode.instruction_type = SHR_REG;
             break;
         }
@@ -316,6 +323,7 @@ inline Bytecode parse(uint16_t opcode) {
 
     switch (bytecode.instruction_type) {
     case UNKNOWN_INSTRUCTION:
+    case HLT:
     case RET:
     case CLS: {
         // no operand
